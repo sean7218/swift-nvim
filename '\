@@ -9,37 +9,33 @@ end
 
 --- calls the swift package describe cli which gives all the targets
 --- tests and files.
+--- @return table
 function M.package_describe()
-    local result = vim.system(
-        {"swift", "package", "describe", "--type", "json"},
-        { text = true }
-    ):wait()
-    local json = vim.json.decode(result.stdout)
-    local targets = json.targets
-    for _, target in ipairs(targets) do
-        print("target > ", target.name, " - ", target.type)
-    end
-    M.targets = targets
+    local stdout = vim.system({"swift", "package", "describe", "--type", "json"})
+    local json = vim.json.decode(stdout)
+    return json
 end
 
 function M.test_list()
-    local result = vim.system(
-        {"swift", "test", "list"},
-        { text = true }
-    ):wait()
-
-    -- spliting stdout into lines
-    local lines = vim.split(result.stdout, "\n", { trimempty = true })
-
-    -- construct tests by grepping
+    local stdout = vim.fn.system("swift test list")
+    local lines = {}
+    for m in stdout:gmatch("[^\r\n]+") do
+        table.insert(lines, m)
+    end
+    local build_complete = false
     local tests = {}
     for _, line in ipairs(lines) do
-        print("test >", line)
-        table.insert(tests, line)
+        if string.find(line, "Build complete!") then
+            build_complete = true
+        end
+        if build_complete then
+            if not string.find(line, "Build complete!") then
+                -- print("test >", line)
+                table.insert(tests, line)
+            end
+        end
     end
-
-    -- set the global list
-    M.tests = tests
+    return tests
 end
 
 function M.create_popup()
@@ -48,7 +44,7 @@ function M.create_popup()
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, M.tests)
 
     local width = 100
-    local height = 20
+    local height = 5
     local opts = {
         relative = "editor",
         width = width,
@@ -97,21 +93,29 @@ function M.create_popup()
 end
 
 vim.api.nvim_create_user_command("SwiftPackageDescribe", function()
-    M.package_describe()
-end, {})
+    local targets = M.package_describe()
+    for _, target in ipairs(targets) do
+        print("target > ", target.name, " - ", target.type)
+    end
 
-vim.api.nvim_create_user_command("SwiftTestList", function()
-    M.test_list()
+    local tests = M.test_list()
+    for _, test in ipairs(tests) do
+        print("test > ", test)
+    end
+
+    -- update global cache
+    M.targets = targets
+    M.tests = tests
 end, {})
 
 vim.api.nvim_create_user_command("SwiftTest", function(opts)
+    local _ = M.package_describe()
+    local _ = M.test_list()
+
     local test_name = opts.args
     print("test_name: ", test_name)
-    local test_output = vim.system(
-        {"swift", "test", "--filter", test_name},
-        { text = true }
-    ):wait()
-    print("test_output: ", test_output.stdout)
+    local test_output = vim.system({"swift test --filter ", test_name})
+    print("test_output: ", test_output)
 end, {
     nargs = 1,
     complete = "file", -- enable filename auto completions when hit tab
@@ -119,9 +123,16 @@ end, {
 })
 
 vim.api.nvim_create_user_command("SwiftToggle", function()
-    M.test_list()
     M.create_popup()
 end, {})
 
+vim.api.nvim_create_user_command("SwiftPackageReset", function()
+    M.targets = M.package_describe()
+    M.tests = M.test_list()
+end, {})
+
+function M.setup()
+    -- M.package_describe()
+end
 
 return M
